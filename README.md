@@ -1,132 +1,256 @@
-# Build a Production‑Ready Universal A2A Agent — with IBM watsonx.ai, MatrixHub & MCP Gateway *(Pro Edition)*
+# Building a Production-Ready, Pluggable A2A Agent with IBM watsonx.ai, MatrixHub, and MCP Gateway
 
-> This end‑to‑end tutorial upgrades the original guide with rock‑solid steps to publish an A2A agent to **MatrixHub** and register it in **MCP Gateway**. It keeps everything you had and **extends it** with production‑safe ingestion flows, manifest templates, and copy‑paste scripts. The result scales, stays vendor‑neutral, and remains easy to evolve.
+This comprehensive, professional-grade tutorial guides you through the process of architecting, building, and deploying a vendor-neutral **Agent-to-Agent (A2A)** service. We will upgrade the foundational concepts of the Universal A2A Agent to a production-ready state by integrating it with **IBM watsonx.ai**, publishing it to the **MatrixHub** service catalog, and registering it with the **MCP Gateway** for secure, standardized communication.
+
+The core architectural principle is **decoupling**: the agent's business logic is separated from the underlying Large Language Model (LLM) provider and the high-level orchestration framework. This design ensures that your agent is extensible, maintainable, and not locked into any single technology stack.
+
+-----
+
+## Architectural Overview
+
+You will run a single, containerized **FastAPI** service that acts as a universal A2A hub. The service exposes a small, stable protocol surface so **any client, framework, or gateway can integrate without SDK lock‑in**. MatrixHub provides catalog/discovery, and MCP Gateway provides secure, standardized ingress/routing.
+
+---
+
+## Core Components (at a glance, no tables)
+
+* **Agent Service (FastAPI):** The core HTTP application that implements A2A behaviors and adapters. Designed to sit behind TLS and ship with health probes and discovery.
+* **Protocol Surface:** A compact set of interoperable endpoints (see *Endpoints* below) so different clients can connect without rewriting.
+* **Framework Adapters (Pluggable):** Orchestration glue for **LangGraph**, **CrewAI**, **LangChain**, etc. Swap at runtime via `AGENT_FRAMEWORK`.
+* **Provider (Pluggable):** The LLM/backend implementation. This guide uses **IBM watsonx.ai**; swap to OpenAI, Ollama, Anthropic, Gemini, Bedrock, etc., via `LLM_PROVIDER` without code changes.
+* **MatrixHub (Catalog):** Discovery/search/install layer. Ingests your manifest, persists `manifests.a2a`, and tags `protocols=["a2a@<ver>"]` so A2A capability is queryable.
+* **MCP Gateway (Ingress):** Secure entry point for clients. Supports **`POST /a2a`** agent registration and optional **virtual servers** via **`POST /servers`** that route to your A2A agent.
 
 ---
 
-## What you’ll build
+## Endpoints (data plane)
 
-A single HTTP service (FastAPI) that exposes:
+* `POST /a2a` — **Raw A2A** request/response (vendor‑neutral, lowest level).
+* `POST /rpc` — **JSON‑RPC 2.0** wrapper for the same A2A methods (e.g., `message/send`).
+* `POST /openai/v1/chat/completions` — **OpenAI‑compatible** shim for immediate ecosystem compatibility.
+* `GET /.well-known/agent-card.json` — **Agent Card** for discovery and metadata.
+* `GET /healthz` and `GET /readyz` — Liveness & readiness (the latter returns actionable reasons).
 
-* `/a2a` (**raw A2A**)
-* `/rpc` (**JSON‑RPC 2.0**)
-* `/openai/v1/chat/completions` (**OpenAI‑compatible**)
-* `/.well-known/agent-card.json` for discovery
-* `/healthz` & `/readyz` for ops
-
-You’ll wire:
-
-* A **pluggable Provider** (IBM **watsonx.ai** in this tutorial; swap via env)
-* A **pluggable Framework** layer (LangGraph, CrewAI, LangChain)
-* A **publishable agent** for **MatrixHub** + optional **MCP Gateway** registration
+> **Auth tip:** If the agent is protected, prefer **Bearer** or **API key**; declare this in your A2A manifest under `manifests.a2a.auth` so clients and gateways know how to call you.
 
 ---
+
+## How the pieces fit
+
+### Data plane (runtime calls)
+
+```
+Client / App / Framework  ──HTTP──>  Universal A2A Agent  ──SDK/API──>  Provider (watsonx.ai)
+```
+
+* Your app never links vendor SDKs; it speaks **HTTP** to the A2A service.
+* The **Provider** is injected via `LLM_PROVIDER` (e.g., `watsonx`, `openai`, `ollama`).
+* The **Framework adapter** (LangGraph/CrewAI/LangChain) orchestrates on top of the same A2A core.
+
+### Control & discovery plane
+
+```
+Author manifest (agent.manifest.yaml)
+        │
+        ▼
+MatrixHub — Ingest (persists manifests.a2a, tags protocols)
+        │
+        ▼
+MatrixHub — Install (best‑effort register to MCP Gateway /a2a; optional /servers)
+        │
+        ▼
+MCP Gateway — Clients call Gateway; Gateway routes to your Agent
+```
+
+* **Ingest**: Makes the agent discoverable and stores A2A metadata (`manifests.a2a` + `protocols`).
+* **Install**: If `MCP_GATEWAY_URL` is configured, the Hub will best‑effort POST to **`/a2a`** on the Gateway and, if your manifest includes `manifests.a2a.server`, create a **virtual server** via **`/servers`**.
+
+---
+
+## Mental model (one slide)
+
+```
+            ┌──────────────────────────────────────┐
+            │            MatrixHub (Catalog)       │
+            │  • Search, discovery, install       │
+            │  • Stores manifests.a2a + protocols │
+            └───────────────┬──────────────────────┘
+                            │ (install triggers best‑effort registration)
+                            ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                         MCP Gateway (Ingress)                         │
+│  • /a2a registration, optional /servers                              │
+│  • Auth, routing, policy                                             │
+└───────────────┬───────────────────────────────────────────────────────┘
+                │ (HTTPS)
+                ▼
+         ┌──────────────────────────┐
+         │  Universal A2A Agent     │  ◄──  /.well-known/agent-card.json
+         │  • /a2a  /rpc  /openai   │
+         │  • /healthz  /readyz     │
+         └──────────┬───────────────┘
+                    │ (SDK/API)
+                    ▼
+            Provider (watsonx.ai)
+```
+
+---
+
+## Portability & upgrades (why this scales)
+
+* **Swap providers** without code changes: `LLM_PROVIDER=watsonx|openai|ollama|…`.
+* **Swap orchestrators**: `AGENT_FRAMEWORK=langgraph|crewai|langchain|…`.
+* **Stable protocol surface** keeps clients unchanged as internals evolve.
+* **MatrixHub A2A‑ready** ingestion stores protocol‑native blocks for future tooling.
+* **Gateway idempotency**: treat `/a2a` and `/servers` as idempotent during installs (409 ⇒ OK when requested).
+
+---
+
+## Quick responsibilities checklist
+
+* **Agent:** implement endpoints; emit clear readiness reasons; return structured A2A responses.
+* **Manifest:** include `manifests.a2a` (version, endpoint\_url, agent\_type, auth, tags; optional `server`).
+* **MatrixHub:** ingest manifests; install into a project; best‑effort register to Gateway if configured.
+* **Gateway:** secure entry; route traffic; list agents/servers; apply auth & policy.
+
+> Keep this as your canonical mental model. It’s 100% compatible with MatrixHub ingestion/installation semantics and MCP Gateway’s `/a2a` + `/servers` APIs.
+
+-----
 
 ## Prerequisites
 
-* Python 3.11+
-* `git`, `make`
-* (optional) Docker / Docker Compose
-* IBM **watsonx.ai** credentials:
+Before proceeding, ensure your development environment meets the following requirements:
 
-  * `WATSONX_API_KEY`
-  * `WATSONX_URL` (e.g., `https://us-south.ml.cloud.ibm.com`)
-  * `WATSONX_PROJECT_ID`
-  * *(optional)* `MODEL_ID` (defaults to `ibm/granite-3-3-8b-instruct` in the sample provider)
-* *(Optional for later sections)* A running **MatrixHub** and **MCP Gateway** instance
+  * **Python 3.11** or newer.
+  * **Core Development Tools:** `git` and `make`.
+  * **(Optional) Containerization:** **Docker** and **Docker Compose** for building and running the service in an isolated environment.
+  * **IBM watsonx.ai Credentials:** You will need an active IBM Cloud account. If you don't have one, you can [register for free](https://cloud.ibm.com/registration).
+      * `WATSONX_API_KEY`: Your service API key.
+      * `WATSONX_URL`: The regional endpoint for your watsonx.ai service (e.g., `https://us-south.ml.cloud.ibm.com`).
+      * `WATSONX_PROJECT_ID`: The unique identifier for your watsonx.ai project.
+  * **(Optional) Deployment Infrastructure:** A running instance of **MatrixHub** and **MCP Gateway** for the final deployment and registration steps.
 
-> **What are MatrixHub & MCP Gateway?**
+> ### **Conceptual Detour: MatrixHub & MCP Gateway**
 >
-> * **MatrixHub** is a service catalog for discovering and installing agents, tools, and servers. It stores A2A manifests and can optionally register your agents in an MCP Gateway.
-> * **MCP Gateway** acts as a secure entry point for clients to talk to registered agents over standardized transports.
+>   * **MatrixHub:** Functions as a **service catalog** or "app store" for distributed agents and tools. It ingests standardized manifests that describe what an agent does and how to communicate with it. Its primary role is discovery and metadata management.
+>   * **MCP Gateway:** Acts as a secure, unified **API Gateway**. It provides a single point of entry for clients, routing requests to the appropriate backend agents registered within it. It handles concerns like authentication, routing, and protocol mediation, decoupling clients from the physical location and implementation details of the agents.
 
----
+-----
 
-## 1) Clone & install
+## 1\. Project Setup and Installation
+
+First, clone the official repository and set up a virtual environment to manage dependencies.
 
 ```bash
+# Clone the project repository
 git clone https://github.com/ruslanmv/universal-a2a-agent.git
 cd universal-a2a-agent
 
+# Create and activate a Python virtual environment
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
 
+# Install the core application and its dependencies
 pip install -e .
-# Adapters used in this tutorial
+
+# Install the optional framework adapters used in this tutorial
+# The [extras] syntax installs optional dependency groups defined in pyproject.toml
 pip install -e .[langgraph]
 pip install -e .[langchain]
 pip install -e .[crewai]
 ```
 
-> Tip: `pip install -e .[all]` installs every adapter.
+> **Tip:** To install all available adapters at once, you can run `pip install -e .[all]`.
 
----
+-----
 
-## 2) Getting your watsonx.ai credentials (quick onboarding)
+## 2\. Acquiring IBM watsonx.ai Credentials
 
-1. Sign up or sign in to **IBM Cloud**.
-2. Create (or open) a **watsonx.ai** project.
-3. In the project, create a **service API key**.
-4. Collect:
+To configure the watsonx.ai provider, you need to obtain your API key and project details from the IBM Cloud platform.
 
-   * `WATSONX_API_KEY` — your API key
-   * `WATSONX_URL` — region endpoint, e.g. `https://us-south.ml.cloud.ibm.com`
-   * `WATSONX_PROJECT_ID` — the GUID of your project
-5. *(Optional)* **Models**: you can use the default `ibm/granite-3-3-8b-instruct` or choose another foundation model available to your account. Set `MODEL_ID` accordingly.
+1.  **Sign in to [IBM Cloud](https://cloud.ibm.com/).**
+2.  Navigate to your **watsonx.ai** instance. If you don't have one, create a new project. You can access your projects directly via `https://dataplatform.cloud.ibm.com/projects/`.
+3.  Within your project's **Manage** tab, go to the **Access Control** section and create a new **service API key**. Securely copy this key.
+4.  Collect the following three values:
+      * `WATSONX_API_KEY`: The API key you just generated.
+      * `WATSONX_URL`: The regional endpoint shown in your service instance details (e.g., `https://us-south.ml.cloud.ibm.com`).
+      * `WATSONX_PROJECT_ID`: The GUID of your project, found in the project's **Manage** -\> **General** settings.
 
-> You can also store these in a `.env` file at the project root:
->
-> ```env
-> LLM_PROVIDER=watsonx
-> WATSONX_API_KEY=your_api_key
-> WATSONX_URL=https://us-south.ml.cloud.ibm.com
-> WATSONX_PROJECT_ID=your_project_id
-> MODEL_ID=ibm/granite-3-3-8b-instruct
-> AGENT_FRAMEWORK=langgraph
-> PUBLIC_URL=http://localhost:8000
-> ```
+For security and ease of configuration, it is highly recommended to store these credentials in a `.env` file at the root of the project.
 
----
+**Example `.env` file:**
 
-## 3) Configure the Provider & Framework
+```env
+# Provider and Framework Selection
+LLM_PROVIDER=watsonx
+AGENT_FRAMEWORK=langgraph
 
-Pick **watsonx.ai** as Provider and a Framework (we’ll start with LangGraph):
+# IBM watsonx.ai Credentials
+WATSONX_API_KEY=your_api_key_here
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_PROJECT_ID=your_project_guid_here
+MODEL_ID=ibm/granite-3-3-8b-instruct # Optional: specify a different model
+
+# Public URL for agent discovery
+PUBLIC_URL=http://localhost:8000
+```
+
+-----
+
+## 3\. Configuring the Runtime Environment
+
+The agent's behavior is controlled by environment variables. This allows you to switch the active provider or framework without any code changes. Set the following variables in your shell (or confirm they are in your `.env` file).
 
 ```bash
+# Select the watsonx.ai provider
 export LLM_PROVIDER=watsonx
+
+# Set your credentials
 export WATSONX_API_KEY=YOUR_KEY
 export WATSONX_URL=https://us-south.ml.cloud.ibm.com
 export WATSONX_PROJECT_ID=YOUR_PROJECT_ID
-# optional
-# export MODEL_ID=ibm/granite-3-3-8b-instruct
 
-export AGENT_FRAMEWORK=langgraph   # or: crewai, langchain
+# Select the LangGraph framework for orchestration
+export AGENT_FRAMEWORK=langgraph  # Other options: crewai, langchain, native
 ```
 
----
+-----
 
-## 4) Run the server
+## 4\. Local Execution and Verification
+
+With the configuration in place, you can now run the server.
 
 ```bash
+# The 'make run' command is a convenient shortcut for the uvicorn command
 make run
-# or
+
+# Alternatively, run uvicorn directly
 uvicorn a2a_universal.server:app --host 0.0.0.0 --port 8000
 ```
 
-Smoke‑test:
+Once the server is running, perform a series of smoke tests to verify that all components are operational.
 
 ```bash
+# 1. Check the interactive API documentation (OpenAPI/Swagger)
 open http://localhost:8000/docs
+
+# 2. Check the basic health endpoint (liveness probe)
 curl -s http://localhost:8000/healthz
+
+# 3. Check the readiness endpoint (readiness probe), which verifies provider connectivity
 curl -s http://localhost:8000/readyz | jq
+
+# 4. Check the agent card for discovery metadata
 curl -s http://localhost:8000/.well-known/agent-card.json | jq
 ```
 
----
+-----
 
-## 5) Talk to the agent — three ways
+## 5\. Validating Agent Functionality via Multiple Protocols
 
-### A) Raw A2A
+Confirm that the agent responds correctly across its different protocol endpoints.
+
+### A) Raw A2A Protocol
 
 ```bash
 curl -s http://localhost:8000/a2a -H 'Content-Type: application/json' -d '{
@@ -138,7 +262,7 @@ curl -s http://localhost:8000/a2a -H 'Content-Type: application/json' -d '{
 }' | jq
 ```
 
-### B) JSON‑RPC 2.0
+### B) JSON-RPC 2.0 Protocol
 
 ```bash
 curl -s http://localhost:8000/rpc -H 'Content-Type: application/json' -d '{
@@ -150,7 +274,7 @@ curl -s http://localhost:8000/rpc -H 'Content-Type: application/json' -d '{
 }' | jq
 ```
 
-### C) OpenAI‑compatible
+### C) OpenAI-Compatible Protocol
 
 ```bash
 curl -s http://localhost:8000/openai/v1/chat/completions \
@@ -161,16 +285,22 @@ curl -s http://localhost:8000/openai/v1/chat/completions \
   }' | jq -r '.choices[0].message.content'
 ```
 
----
+-----
 
-## 6) Use from frameworks (A2A → watsonx.ai)
+## 6\. Integration with Orchestration Frameworks
 
-> **Note on orchestration LLMs**: Some frameworks (LangChain, CrewAI) may require an LLM for the planner/orchestrator itself (e.g., `ChatOpenAI`). This is separate from the actual **work**, which we route through A2A → watsonx. If needed, set an API key for the framework’s LLM (e.g., `OPENAI_API_KEY`).
+A key advantage of this architecture is its ability to serve as a standardized tool for higher-level frameworks.
 
-### 6.1 LangChain Tool
+> 🚨 **Critical Note on Orchestrator LLMs**
+>
+> Frameworks like **LangChain** and **CrewAI** often use an LLM for their internal **planning and routing logic** (the "orchestrator"). This is separate from the LLM used for **executing tasks** (our watsonx.ai provider). If the framework's default orchestrator is `ChatOpenAI`, you **must** set an `OPENAI_API_KEY` for the framework to function, even though all substantive work will be routed through our A2A agent to watsonx.ai.
+
+### 6.1. LangChain `Tool` Integration
+
+Here, we wrap our A2A endpoint as a `Tool` that a LangChain agent can decide to use.
 
 ```python
-# examples/quickstart_langchain_watsonx.py
+# File: examples/quickstart_langchain_watsonx.py
 import httpx
 from langchain.agents import initialize_agent, AgentType
 from langchain_core.tools import Tool
@@ -178,34 +308,46 @@ from langchain_openai import ChatOpenAI
 
 BASE = "http://localhost:8000"
 
+# Define the function that calls our A2A endpoint
 def a2a_call(prompt: str) -> str:
-    payload = {
-        "method": "message/send",
-        "params": {"message": {
-            "role": "user", "messageId": "lc-tool",
-            "parts": [{"type": "text", "text": prompt}],
-        }},
-    }
-    r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
-    r.raise_for_status()
-    data = r.json()
-    for p in (data.get("message") or {}).get("parts", []):
-        if p.get("type") == "text":
-            return p.get("text", "")
-    return ""
+    try:
+        payload = {
+            "method": "message/send",
+            "params": {"message": {
+                "role": "user", "messageId": "lc-tool",
+                "parts": [{"type": "text", "text": prompt}],
+            }},
+        }
+        r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
+        r.raise_for_status()
+        data = r.json()
+        # Extract the text response from the A2A message structure
+        for p in (data.get("message") or {}).get("parts", []):
+            if p.get("type") == "text":
+                return p.get("text", "")
+        return "[No text part in A2A response]"
+    except httpx.HTTPError as e:
+        return f"[A2A HTTP Error: {e}]"
+    except Exception as e:
+        return f"[A2A call failed: {e}]"
 
+
+# Create the LangChain Tool
 tool = Tool(name="a2a_hello", description="Send a prompt to the Universal A2A agent.", func=a2a_call)
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0) # This is the orchestrator LLM
 agent = initialize_agent([tool], llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION)
 
 if __name__ == "__main__":
-    print(agent.run("Use the a2a_hello tool to say hello to LangChain."))
+    response = agent.run("Use the a2a_hello tool to say hello to LangChain.")
+    print(response)
 ```
 
-### 6.2 LangGraph Node
+### 6.2. LangGraph `Node` Integration
+
+In LangGraph, our A2A agent can act as a node in a stateful graph.
 
 ```python
-# examples/quickstart_langgraph_watsonx.py
+# File: examples/quickstart_langgraph_watsonx.py
 import asyncio, httpx
 from langgraph.graph import StateGraph, END, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage
@@ -213,27 +355,34 @@ from langchain_core.messages import HumanMessage, AIMessage
 BASE = "http://localhost:8000"
 
 async def a2a_send(text: str) -> str:
-    payload = {
-        "method": "message/send",
-        "params": {"message": {
-            "role": "user", "messageId": "lg-node",
-            "parts": [{"type": "text", "text": text}],
-        }},
-    }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(f"{BASE}/a2a", json=payload)
-        r.raise_for_status()
-        data = r.json()
-        for p in (data.get("message") or {}).get("parts", []):
-            if p.get("type") == "text":
-                return p.get("text", "")
-    return ""
+    try:
+        payload = {
+            "method": "message/send",
+            "params": {"message": {
+                "role": "user", "messageId": "lg-node",
+                "parts": [{"type": "text", "text": text}],
+            }},
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(f"{BASE}/a2a", json=payload)
+            r.raise_for_status()
+            data = r.json()
+            for p in (data.get("message") or {}).get("parts", []):
+                if p.get("type") == "text":
+                    return p.get("text", "")
+        return "[No text part in A2A response]"
+    except httpx.HTTPError as e:
+        return f"[A2A HTTP Error: {e}]"
+    except Exception as e:
+        return f"[A2A call failed: {e}]"
 
+# This function defines the logic for our graph node
 async def a2a_node(state: dict) -> dict:
-    last = state["messages"][-1]
-    reply = await a2a_send(getattr(last, "content", ""))
+    last_message = state["messages"][-1]
+    reply = await a2a_send(getattr(last_message, "content", ""))
     return {"messages": [AIMessage(content=reply)]}
 
+# Build the graph
 g = StateGraph(MessagesState)
 g.add_node("a2a", a2a_node)
 g.add_edge("__start__", "a2a")
@@ -248,39 +397,43 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### 6.3 CrewAI — **Duo** (Researcher → Writer) with watsonx via A2A *(Extended)*
+### 6.3. CrewAI Multi-Agent System
 
-> Save as `examples/crewai_watsonx_duo.py`
+This example demonstrates a multi-agent workflow where agents use our A2A service (backed by watsonx.ai) as their primary tool.
 
 ```python
+# File: examples/crewai_watsonx_duo.py
 import os
 import httpx
 from crewai import Agent, Task, Crew
 
 BASE = os.getenv("A2A_BASE", "http://localhost:8000")
 
+# The A2A tool is shared by all agents in the crew
 def a2a_call(prompt: str) -> str:
-    payload = {
-        "method": "message/send",
-        "params": {
-            "message": {
-                "role": "user",
-                "messageId": "crewai-duo",
+    try:
+        payload = {
+            "method": "message/send",
+            "params": {"message": {
+                "role": "user", "messageId": "crewai-duo",
                 "parts": [{"type": "text", "text": prompt}],
-            }
-        },
-    }
-    r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
-    r.raise_for_status()
-    data = r.json()
-    for p in (data.get("message") or {}).get("parts", []):
-        if p.get("type") == "text":
-            return p.get("text", "")
-    return ""
+            }},
+        }
+        r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
+        r.raise_for_status()
+        data = r.json()
+        for p in (data.get("message") or {}).get("parts", []):
+            if p.get("type") == "text":
+                return p.get("text", "")
+        return "[No text part in A2A response]"
+    except Exception as e:
+        return f"[A2A call failed: {e}]"
+
 
 if __name__ == "__main__":
     topic = "Edge AI for autonomous drones in search & rescue"
 
+    # Define the Researcher Agent
     researcher = Agent(
         role="Researcher",
         goal="Gather concise, accurate notes and outline the topic.",
@@ -290,6 +443,7 @@ if __name__ == "__main__":
         verbose=True,
     )
 
+    # Define the Writer Agent
     writer = Agent(
         role="Writer",
         goal="Turn notes into a tidy LaTeX article (1–2 pages).",
@@ -299,6 +453,7 @@ if __name__ == "__main__":
         verbose=True,
     )
 
+    # Define the Research Task
     t_research = Task(
         description=(
             f"Research the topic: '{topic}'. "
@@ -310,6 +465,7 @@ if __name__ == "__main__":
         expected_output="A clean Markdown outline of findings.",
     )
 
+    # Define the Writing Task, which depends on the research task
     t_write = Task(
         description=(
             "Using the outline from the Researcher, write a compilable LaTeX article. "
@@ -321,93 +477,46 @@ if __name__ == "__main__":
         expected_output="A single LaTeX .tex string, compilable.",
     )
 
+    # Assemble and run the crew
     crew = Crew(agents=[researcher, writer], tasks=[t_research, t_write])
     result = crew.kickoff()
     print("\n=== FINAL LATEX ===\n")
     print(result)
 ```
 
-> **Enhancement ideas**: Add a **Reviewer** agent for quality and LaTeX fixes, and persist the final `.tex` to disk.
+-----
 
-**Reviewer add‑on (tiny diff):**
+## 7\. Containerization with Docker
 
-```python
-# Add after writer definition
-reviewer = Agent(
-    role="Reviewer",
-    goal="Improve clarity and fix LaTeX issues without changing intent.",
-    backstory="Meticulous editor who ensures the .tex compiles.",
-    tools=[a2a_call],
-    allow_delegation=False,
-    verbose=True,
-)
+Containerizing the application with Docker ensures consistency and portability across different environments.
 
-# New task that depends on writer output
-t_review = Task(
-    description=(
-        "Review the LaTeX from the Writer for clarity and LaTeX correctness. "
-        "Use the a2a_call tool for edits if needed. "
-        "Return the corrected final .tex only."
-    ),
-    agent=reviewer,
-    context=[t_write],
-    expected_output="Corrected final .tex (single string).",
-)
-
-crew = Crew(agents=[researcher, writer, reviewer], tasks=[t_research, t_write, t_review])
-```
-
-> Optional: write to file
->
-> ```python
-> with open("final.tex", "w", encoding="utf-8") as f:
->     f.write(result)
-> print("Saved to final.tex")
-> ```
-
----
-
-## 7) Containerize & run in Docker
-
-**Build & run locally:**
+**Build and Run the Docker Image:**
 
 ```bash
-docker build -t yourrepo/universal-a2a-agent:1.2.0 .
+# Build the image, tagging it with a version
+docker build -t your-repo/universal-a2a-agent:1.2.0 .
+
+# Run the container, passing credentials as environment variables
 docker run --rm -p 8000:8000 \
   -e PUBLIC_URL=http://localhost:8000 \
   -e LLM_PROVIDER=watsonx \
-  -e WATSONX_API_KEY=... \
-  -e WATSONX_URL=... \
-  -e WATSONX_PROJECT_ID=... \
-  yourrepo/universal-a2a-agent:1.2.0
+  -e WATSONX_API_KEY=$WATSONX_API_KEY \
+  -e WATSONX_URL=$WATSONX_URL \
+  -e WATSONX_PROJECT_ID=$WATSONX_PROJECT_ID \
+  your-repo/universal-a2a-agent:1.2.0
 ```
 
-> Replace `yourrepo` with your Docker Hub username or your registry path.
+> Note: The `PUBLIC_URL` variable is used by the agent service itself. For deploying the MatrixHub service, a different variable, `PUBLIC_BASE_URL`, is often required.
 
-**Compose (optional):**
+-----
 
-```yaml
-version: "3.9"
-services:
-  a2a-agent:
-    image: yourrepo/universal-a2a-agent:1.2.0
-    ports: ["8000:8000"]
-    environment:
-      PUBLIC_URL: http://localhost:8000
-      LLM_PROVIDER: watsonx
-      WATSONX_API_KEY: ${WATSONX_API_KEY}
-      WATSONX_URL: ${WATSONX_URL}
-      WATSONX_PROJECT_ID: ${WATSONX_PROJECT_ID}
-    restart: unless-stopped
-```
+## 8\. Production Deployment: Publishing to MatrixHub
 
----
+In a production environment, agents must be discoverable. This is achieved by publishing a manifest to **MatrixHub**.
 
-## 8) Publish to MatrixHub (A2A‑ready)
+### 8.1. Authoring the Agent Manifest
 
-MatrixHub stores A2A details under `entity.manifests.a2a` and tags `entity.protocols += ["a2a@<version>"]` for discovery.
-
-### 8.1 Author your catalog manifest — `agent.manifest.yaml`
+Create a manifest file (`agent.manifest.yaml`) that describes your agent. This file contains all the metadata needed for discovery and communication.
 
 ```yaml
 schema_version: 1
@@ -416,84 +525,89 @@ type: agent
 id: universal-a2a-hello
 version: 1.2.0
 name: Universal A2A — Hello
-summary: JSON‑RPC echo agent, backed by IBM watsonx.ai
+summary: JSON-RPC echo agent, backed by IBM watsonx.ai
 homepage: https://example.com/universal-a2a
 license: Apache-2.0
 capabilities: ["echo", "summarize"]
 
+# A2A-specific manifest block
 manifests:
   a2a:
     version: "1.0"
-    endpoint_url: "https://your-agent.example.com/a2a"  # or /rpc
-    agent_type: jsonrpc
-    auth: { type: none, value: "" }  # or bearer/api_key
+    # This URL must be the final, publicly accessible endpoint of your agent
+    endpoint_url: "https://your-agent.example.com/a2a"
+    agent_type: jsonrpc # The protocol type
+    auth: { type: none, value: "" } # Can be 'bearer' or 'api_key'
     tags: ["watsonx", "demo"]
+    # This block allows MatrixHub to auto-register a virtual server in MCP Gateway during install
     server:
       name: universal-a2a-hello-server
       description: Gateway virtual server exposing this A2A agent
 ```
 
-### 8.2 Publish an index — `index.json`
+### 8.2. Publishing to MatrixHub
 
-Any supported shape is fine (MatrixHub is permissive):
+MatrixHub ingests a catalog by fetching an `index.json` file that points to one or more manifest files. Host your manifest and index files on a reachable `http(s)://` server (e.g., GitHub Pages, S3). `file://` sources are not supported.
 
-```json
-{ "manifests": ["https://your-host/agent.manifest.yaml"] }
-```
-
-or
+**Example `index.json`:**
 
 ```json
-{ "items": [{"manifest_url": "https://your-host/agent.manifest.yaml"}] }
+{
+  "manifests": [
+    "https://your-host.com/agent.manifest.yaml"
+  ]
+}
 ```
 
-or
-
-```json
-{ "entries": [{"path": "agent.manifest.yaml", "base_url": "https://your-host/"}] }
-```
-
-### 8.3 Ingest into MatrixHub
+**Ingest the catalog into MatrixHub:**
 
 ```bash
-export HUB_BASE=${HUB_BASE:-http://localhost:443}
+# Use a non-TLS port for local dev, or https://localhost for local TLS
+export HUB_BASE=${HUB_BASE:-http://localhost:8080}
 
-curl -s -X POST "$HUB_BASE/catalog/ingest" \
-  -H 'Content-Type: application/json' \
-  -d '{ "index_url": "https://your-host/index.json" }' | jq
+# Ingest using the current route
+curl -s -X POST "$HUB_BASE/catalog/ingest" -H 'Content-Type: application/json' \
+  -d '{"index_url":"https://your-host.com/index.json"}' | jq
+
+# For legacy deployments, the route might be /ingest
+# curl -s -X POST "$HUB_BASE/ingest" -H 'Content-Type: application/json' \
+#   -d '{"index_url":"https://your-host.com/index.json"}' | jq
 ```
 
-**Expected:** entity created; `entity.manifests.a2a` present; `entity.protocols` includes `a2a@1.0`.
+> **Note on Database Schema:** For A2A metadata to persist correctly, the MatrixHub database `entity` table requires `protocols` (jsonb) and `manifests` (jsonb) columns. If these are missing, ingestion will still succeed, but A2A-specific data will not be saved.
 
-### 8.4 Install the agent (and best‑effort register to Gateway)
+### 8.3. Installing the Agent and Registering with the Gateway
+
+The **install** step is what triggers the registration with MCP Gateway.
 
 ```bash
-curl -s -X POST "$HUB_BASE/catalog/install" \
-  -H 'Content-Type: application/json' \
-  -d '{ "id": "agent:universal-a2a-hello@1.2.0", "target": "/tmp/myapp" }' | jq
+# This 'install' command triggers the best-effort Gateway registration
+curl -s -X POST "$HUB_BASE/catalog/install" -H 'Content-Type: application/json' \
+  -d '{"id":"agent:universal-a2a-hello@1.2.0","target":"/tmp/myapp"}' | jq
 ```
 
-> If your A2A manifest includes a `server` block, MatrixHub will try to create a virtual server in the Gateway and associate this agent. It won’t fail the install if the Gateway is unreachable.
+**Corrected Behavior:**
+After ingestion, the agent is discoverable in MatrixHub. During the **install** process, if the `MCP_GATEWAY_URL` environment variable is configured for your MatrixHub instance and your `manifests.a2a.server` block is present, MatrixHub will make a best-effort attempt to register the agent with the Gateway via a `POST /a2a` request and create its virtual server via `POST /servers`.
 
----
+-----
 
-## 9) Register directly with MCP Gateway (optional)
+## 9\. Direct Registration with MCP Gateway
 
-A tiny helper client is enough. Example shape:
+For more direct control, you can register the agent and its virtual server programmatically using the production gateway client or raw API calls.
+
+### Recommended Method: Using the Production Client
+
+The preferred, production-safe method is to use the provided gateway client, which handles endpoint logic, idempotency, and authentication.
 
 ```python
-# scripts/register_a2a.py
-from typing import Optional
-import os, requests
+# File: scripts/register_a2a.py
+import os
+from src.services.gateway_client import register_a2a_agent, create_server_with_a2a
 
-GATEWAY = os.getenv("MCP_GATEWAY_URL", "http://localhost:4444")
-TOKEN: Optional[str] = os.getenv("MCP_GATEWAY_TOKEN")  # optional Bearer token
+TOKEN = os.getenv("MCP_GATEWAY_TOKEN")  # optional; client can mint JWT instead
 
-HEADERS = {"Content-Type": "application/json"}
-if TOKEN:
-    HEADERS["Authorization"] = TOKEN
-
-agent = {
+# 1. Define and register the A2A agent
+agent_spec = {
     "name": "universal-a2a-hello",
     "endpoint_url": "https://your-agent.example.com/a2a",
     "agent_type": "jsonrpc",
@@ -501,40 +615,62 @@ agent = {
     "auth_value": None,
     "tags": ["watsonx", "demo"],
 }
+print(register_a2a_agent(agent_spec, idempotent=True, token=TOKEN))
 
-# 1) Register agent (idempotent suggestion)
-resp = requests.post(f"{GATEWAY}/agents/a2a", json=agent, headers=HEADERS, timeout=15)
-print("register a2a:", resp.status_code, resp.text)
-
-# 2) Create a virtual server referencing the agent
-server = {
+# 2. Define and create the virtual server
+server_payload = {
     "name": "universal-a2a-hello-server",
     "description": "Gateway virtual server exposing the A2A agent",
-    "associated_a2a_agents": [agent["name"]],
+    "associated_a2a_agents": [agent_spec["name"]],
 }
-resp = requests.post(f"{GATEWAY}/servers", json=server, headers=HEADERS, timeout=15)
-print("create server:", resp.status_code, resp.text)
+print(create_server_with_a2a(server_payload, idempotent=True, token=TOKEN))
 ```
 
-Run:
+### Alternative: Raw API Requests
+
+For transparency and understanding the underlying API calls, here is the equivalent using raw `requests`. Note the corrected endpoint paths (`/a2a` and `/servers`).
+
+```python
+# File: scripts/register_a2a_raw.py
+import os, requests
+
+GATEWAY = os.getenv("MCP_GATEWAY_URL", "http://localhost:4444")
+HEADERS = {"Content-Type": "application/json"}
+
+# Handle authentication token correctly
+if os.getenv("MCP_GATEWAY_TOKEN"):
+    t = os.getenv("MCP_GATEWAY_TOKEN").strip()
+    HEADERS["Authorization"] = t if t.lower().startswith(("bearer ", "basic ")) else f"Bearer {t}"
+
+# 1. Register agent at POST /a2a
+agent = {"name":"universal-a2a-hello","endpoint_url":"https://your-agent.example.com/a2a","agent_type":"jsonrpc","auth_type":"none","auth_value":None,"tags":["watsonx","demo"]}
+print(requests.post(f"{GATEWAY}/a2a", json=agent, headers=HEADERS, timeout=15).text)
+
+# 2. Create server at POST /servers
+server = {"name":"universal-a2a-hello-server","description":"Gateway virtual server exposing the A2A agent","associated_a2a_agents":[agent["name"]]}
+print(requests.post(f"{GATEWAY}/servers", json=server, headers=HEADERS, timeout=15).text)
+```
+
+Run your chosen script with your Gateway's URL configured:
 
 ```bash
 export MCP_GATEWAY_URL="https://gateway.example.com"
-# optional: export MCP_GATEWAY_TOKEN="Bearer <token>"
+# export MCP_GATEWAY_TOKEN="your_token_if_needed"
 python scripts/register_a2a.py
 ```
 
----
+-----
 
-## 10) Call your **deployed** agent from a watsonx.ai notebook
+## 10\. Consuming the Deployed Agent from a watsonx.ai Notebook
 
-Once your agent is reachable over HTTPS (via Docker, Compose, or Kubernetes ingress), you can call the **OpenAI‑compatible** route from any notebook:
+Once your agent is deployed and publicly accessible via an HTTPS endpoint, it can be easily consumed from any client environment, including a Jupyter Notebook running in watsonx.ai.
 
 ```python
 import os, requests
 
-BASE = os.getenv("A2A_BASE", "https://your-host")
-TOKEN = os.getenv("A2A_TOKEN", "")  # optional
+# The public base URL of your deployed agent
+BASE = os.getenv("A2A_BASE", "https://your-agent.example.com")
+TOKEN = os.getenv("A2A_TOKEN") # An auth token, if you configured one
 
 headers = {"Content-Type": "application/json"}
 if TOKEN:
@@ -542,68 +678,28 @@ if TOKEN:
 
 body = {
     "model": "universal-a2a-hello",
-    "messages": [{"role": "user", "content": "ping from watsonx.ai"}],
+    "messages": [{"role": "user", "content": "ping from watsonx.ai notebook"}],
 }
 
-r = requests.post(f"{BASE}/openai/v1/chat/completions", json=body, headers=headers, timeout=20)
-r.raise_for_status()
-print(r.json()["choices"][0]["message"]["content"])
+# Call the OpenAI-compatible endpoint
+response = requests.post(
+    f"{BASE}/openai/v1/chat/completions",
+    json=body,
+    headers=headers,
+    timeout=20
+)
+response.raise_for_status()
+content = response.json()["choices"][0]["message"]["content"]
+print(content)
 ```
 
----
+-----
 
-## 11) Golden templates (prompts & ops)
+## 11\. Concluding Analysis: Architectural Merits
 
-**Crew/LLM task**
+This architecture provides a robust foundation for building scalable, enterprise-grade agentic applications.
 
-```
-You are a {role}. Your goal:
-{goal}
-
-Constraints:
-- Be concise and correct.
-- For generation/summarization, call the external A2A tool.
-
-Deliverable:
-- {expected_output}
-```
-
-**System prompt**
-
-```
-You route generation to a Universal A2A backend.
-- Never leak provider credentials.
-- Prefer short, actionable outputs.
-- If input is noisy, clarify assumptions first.
-```
-
-**Ops checklist**
-
-* HTTPS/TLS everywhere; set `PUBLIC_URL` accordingly
-* Protect `/openai/v1/chat/completions` with auth (bearer/API key)
-* Add `/healthz` + `/readyz` probes
-* Structured JSON logs; centralize
-* Rate-limit public ingress
-* Pin images by digest in prod
-
----
-
-## 12) Troubleshooting
-
-* **`/readyz` shows not ready** → check credentials and env (`curl -s /readyz | jq` gives reasons).
-* **Framework examples error** → some frameworks need a planner LLM; set `OPENAI_API_KEY` (or your alternative) for the *framework*, not for A2A.
-* **Gateway 401/403** → set `MCP_GATEWAY_TOKEN` or enable JWT minting.
-* **MatrixHub ingest skips A2A** → ensure your DB schema includes `entity.protocols` and `entity.manifests` (JSONB). Ingest will still work; A2A won’t persist without schema.
-* **CORS / Browser calls** → enable CORS in the server env & middleware.
-
----
-
-## 13) Why this design scales
-
-* **Protocol‑first**: Agent Card + A2A manifest decouple your app from frameworks
-* **Safe ingestion**: MatrixHub stores A2A blocks & tags protocols; idempotent, concurrent fetch, single‑threaded DB writes
-* **Gateway client**: HTTP/2 pooled clients, retries, idempotency on Conflict (pattern)
-* **Swappable providers**: single env var away (`LLM_PROVIDER`)
-* **Zero lock‑in**: your application speaks HTTP to a single facade
-
-> Ship agentic apps faster — with one A2A facade, production‑grade plumbing, and frictionless publishing to MatrixHub + MCP Gateway.
+  * **Protocol-Driven Decoupling:** By relying on standard manifests (Agent Card, A2A) and protocols (JSON-RPC, OpenAI-compatible), the agent is decoupled from any specific client or framework, promoting interoperability.
+  * **Extensibility and Vendor Neutrality:** The pluggable provider and framework layers allow the system to adapt to new LLMs and orchestration techniques without requiring a rewrite of the core service.
+  * **Production-Grade Operations:** The design includes essential operational features like health checks, structured logging, and containerization. The publishing flow via MatrixHub and MCP Gateway provides a managed, secure, and discoverable deployment pattern suitable for enterprise environments.
+  * **Simplified Ingestion:** The catalog-based approach with MatrixHub enables a safe and idempotent process for discovering and registering new agents into the ecosystem.
