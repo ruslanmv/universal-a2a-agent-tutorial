@@ -1306,60 +1306,78 @@ This example demonstrates a multi-agent workflow where agents use our A2A servic
 ```python
 # File: examples/crewai_watsonx_duo.py
 import os
-import httpx
-from crewai import Agent, Task, Crew
+from dotenv import load_dotenv
 
-BASE = os.getenv("A2A_BASE", "http://localhost:8000")
+from crewai import Agent, Task, Crew, LLM
+from a2a_universal.adapters.crewai_base_tool import A2AHelloTool
 
-# The A2A tool is shared by all agents in the crew
-def a2a_call(prompt: str) -> str:
-    try:
-        payload = {
-            "method": "message/send",
-            "params": {"message": {
-                "role": "user", "messageId": "crewai-duo",
-                "parts": [{"type": "text", "text": prompt}],
-            }},
-        }
-        r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
-        r.raise_for_status()
-        data = r.json()
-        for p in (data.get("message") or {}).get("parts", []):
-            if p.get("type") == "text":
-                return p.get("text", "")
-        return "[No text part in A2A response]"
-    except Exception as e:
-        return f"[A2A call failed: {e}]"
+# -------------------------------------------------------------------
+# Load environment variables
+# -------------------------------------------------------------------
+load_dotenv()
 
+# Required environment variables for Watsonx
+model_id = os.getenv("MODEL_ID", "ibm/granite-3-8b-instruct")  # ✅ updated default
+project_id = os.environ.get("WATSONX_PROJECT_ID")
+url = os.environ.get("WATSONX_URL")
+api_key = os.environ.get("WATSONX_API_KEY")
 
+if not all([project_id, url, api_key]):
+    raise RuntimeError(
+        "Missing Watsonx credentials. Please set WATSONX_PROJECT_ID, WATSONX_URL, and WATSONX_API_KEY in your .env file."
+    )
+
+# -------------------------------------------------------------------
+# Watsonx LLM (CrewAI-native via LiteLLM provider)
+# -------------------------------------------------------------------
+# NOTE: CrewAI’s `LLM` expects a LiteLLM-compatible model string.
+# For watsonx, you must prefix with "watsonx/"
+watsonx_llm = LLM(
+    model=f"watsonx/{model_id}",
+    api_key=api_key,
+    base_url=url,           # LiteLLM uses api_base/base_url for endpoint
+    temperature=0.0,
+    max_tokens=2048,
+    project_id=project_id,  # forwarded to watsonx provider
+)
+
+# -------------------------------------------------------------------
+# Main Crew workflow
+# -------------------------------------------------------------------
 if __name__ == "__main__":
     topic = "Edge AI for autonomous drones in search & rescue"
 
-    # Define the Researcher Agent
+    # Shared A2A Tool
+    a2a_tool = A2AHelloTool()
+    a2a_tool.base_url = os.getenv("A2A_BASE", "http://localhost:8000")
+
+    # Researcher Agent
     researcher = Agent(
         role="Researcher",
         goal="Gather concise, accurate notes and outline the topic.",
         backstory="Methodical analyst who drafts clean bullet-point notes.",
-        tools=[a2a_call],
+        tools=[a2a_tool],
+        llm=watsonx_llm,   # ✅ use CrewAI-native Watsonx LLM
         allow_delegation=False,
         verbose=True,
     )
 
-    # Define the Writer Agent
+    # Writer Agent
     writer = Agent(
         role="Writer",
         goal="Turn notes into a tidy LaTeX article (1–2 pages).",
         backstory="Technical writer who produces compilable LaTeX.",
-        tools=[a2a_call],
+        tools=[a2a_tool],
+        llm=watsonx_llm,   # ✅ use CrewAI-native Watsonx LLM
         allow_delegation=False,
         verbose=True,
     )
 
-    # Define the Research Task
+    # Research Task
     t_research = Task(
         description=(
             f"Research the topic: '{topic}'. "
-            "Use the a2a_call tool to produce a concise outline with bullet points, "
+            "Use the a2a_hello tool to produce a concise outline with bullet points, "
             "covering background, key challenges, approaches, and example applications. "
             "Output: a Markdown outline."
         ),
@@ -1367,11 +1385,11 @@ if __name__ == "__main__":
         expected_output="A clean Markdown outline of findings.",
     )
 
-    # Define the Writing Task, which depends on the research task
+    # Writing Task (depends on research)
     t_write = Task(
         description=(
             "Using the outline from the Researcher, write a compilable LaTeX article. "
-            "Use the a2a_call tool to help with prose and LaTeX formatting. "
+            "Use the a2a_hello tool to help with prose and LaTeX formatting. "
             "Return only the final .tex content."
         ),
         agent=writer,
@@ -1379,13 +1397,19 @@ if __name__ == "__main__":
         expected_output="A single LaTeX .tex string, compilable.",
     )
 
-    # Assemble and run the crew
+    # Crew assembly & execution
     crew = Crew(agents=[researcher, writer], tasks=[t_research, t_write])
     result = crew.kickoff()
+
     print("\n=== FINAL LATEX ===\n")
     print(result)
+
 ```
 
+![](assets/2025-09-16-00-46-54.png)
+
+
+![](assets/2025-09-16-00-47-39.png)
 -----
 
 ## 7\. Containerization with Docker
