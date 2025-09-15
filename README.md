@@ -26,8 +26,42 @@ An *agent* is a small, goal‑oriented program (usually backed by an LLM) that c
 > In practice you mix these (e.g., Planner/Executor that also does RAG and uses tools).
 
 ---
+## What is Universal A2A Agent
 
-## What is A2A (Agent‑to‑Agent)?
+Universal A2A Agent is a production-ready, framework-agnostic implementation of the Agent-to-Agent (A2A) protocol. It bridges the gap between abstract standards and real-world deployments by providing a unified server that speaks both A2A and OpenAI-compatible APIs, while seamlessly integrating with modern frameworks such as LangGraph, LangChain, CrewAI, AutoGen, BeeAI, and more.
+
+Designed for scalability and interoperability, it offers:
+
+- Multi-provider support (Watsonx.ai, OpenAI, Claude, Gemini, Ollama, Azure OpenAI, AWS Bedrock, etc.)
+
+- Multi-framework orchestration (LangGraph, CrewAI, LangChain, AutoGen)
+
+- Enterprise-ready operations (Docker, Helm, CI/CD, health checks, observability)
+
+- Secure adapters for private enterprise integrations
+
+By combining standards compliance with developer-friendly APIs and cloud-native deployment tools, Universal A2A Agent becomes the reference hub for connecting AI systems, orchestrators, and enterprise tools—future-proofing your AI infrastructure for the fast-evolving multi-agent ecosystem.
+
+## What is A2A (Agent‑to‑Agent) services?
+
+This project provides a **HTTP service** (FastAPI) you run once and point anything at:
+
+* `POST /a2a` — minimal A2A envelope
+* `POST /rpc` — JSON-RPC 2.0
+* `POST /openai/v1/chat/completions` — OpenAI-compatible
+
+Inside, the runtime “brain” is **split** into two **pluggable** layers:
+
+* **Provider plugin** → *Which LLM vendor/model do we call?*
+  Examples: `watsonx`, `openai`, `ollama`, `anthropic`, `gemini`, `azure_openai`, `bedrock`.
+  Selected by `LLM_PROVIDER`. Located in `src/a2a_universal/provider_plugins/`.
+
+* **Framework plugin** → *How do we call it for this use-case?*
+  Examples: simple LangGraph-style loop, CrewAI-like stepper, etc.
+  Selected by `AGENT_FRAMEWORK`. Located in `src/a2a_universal/framework_plugins/`.
+
+> Think: **Provider** = “the model backend” (watsonx.ai).
+> **Framework** = “the orchestration strategy” (how we structure the prompt/response loop).
 
 **A2A is a vendor‑neutral way to call an *agent service*** over a small, stable API. Your app—or another agent—sends a structured message; the service is free to choose models, invoke tools, run workflows, and return a well‑formed reply. The big win is **decoupling**: one contract on the outside, freedom to change providers/frameworks on the inside.
 
@@ -267,7 +301,9 @@ Before proceeding, ensure your development environment meets the following requi
 
 -----
 
-## 1\. Project Setup and Installation
+## 1\. Project Setup and Installation.
+
+In this Demo we are going to assume that you have Linux system, like ubuntu, and we assume that you have Python 3.11 installed.
 
 First, clone the official repository and set up a virtual environment to manage dependencies.
 
@@ -275,14 +311,30 @@ First, clone the official repository and set up a virtual environment to manage 
 # Clone the project repository
 git clone https://github.com/ruslanmv/universal-a2a-agent.git
 cd universal-a2a-agent
+```
 
+## Automatic method
+Then we can use type the following commands to install it, where we  create and activate a Python virtual environment and  Install the core application and its dependencies
+
+```bash
+make install
+```
+We install the optional framework adapters used in this tutorial
+
+```bash
+make install-extras EXTRAS="langgraph crewai watsonx"
+```
+It will takes long to install all packages. So take your time...  Meanwhile you can continue with the next section.
+![](assets/2025-09-15-16-23-37.png)
+
+Or if you want to do manually you can do
+## Manually method
+```bash
 # Create and activate a Python virtual environment
 python -m venv .venv
 source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
-
 # Install the core application and its dependencies
 pip install -e .
-
 # Install the optional framework adapters used in this tutorial
 # The [extras] syntax installs optional dependency groups defined in pyproject.toml
 pip install -e .[langgraph]
@@ -294,58 +346,6 @@ pip install -e .[crewai]
 
 -----
 
-## 2\. Acquiring IBM watsonx.ai Credentials
-
-To configure the watsonx.ai provider, you need to obtain your API key and project details from the IBM Cloud platform.
-
-1.  **Sign in to [IBM Cloud](https://cloud.ibm.com/).**
-2.  Navigate to your **watsonx.ai** instance. If you don't have one, create a new project. You can access your projects directly via `https://dataplatform.cloud.ibm.com/projects/`.
-3.  Within your project's **Manage** tab, go to the **Access Control** section and create a new **service API key**. Securely copy this key.
-4.  Collect the following three values:
-      * `WATSONX_API_KEY`: The API key you just generated.
-      * `WATSONX_URL`: The regional endpoint shown in your service instance details (e.g., `https://us-south.ml.cloud.ibm.com`).
-      * `WATSONX_PROJECT_ID`: The GUID of your project, found in the project's **Manage** -\> **General** settings.
-
-For security and ease of configuration, it is highly recommended to store these credentials in a `.env` file at the root of the project.
-
-**Example `.env` file:**
-
-```env
-# Provider and Framework Selection
-LLM_PROVIDER=watsonx
-AGENT_FRAMEWORK=langgraph
-
-# IBM watsonx.ai Credentials
-WATSONX_API_KEY=your_api_key_here
-WATSONX_URL=https://us-south.ml.cloud.ibm.com
-WATSONX_PROJECT_ID=your_project_guid_here
-MODEL_ID=ibm/granite-3-3-8b-instruct # Optional: specify a different model
-
-# Public URL for agent discovery
-PUBLIC_URL=http://localhost:8000
-```
-
------
-
-## 3\. Configuring the Runtime Environment
-
-The agent's behavior is controlled by environment variables. This allows you to switch the active provider or framework without any code changes. Set the following variables in your shell (or confirm they are in your `.env` file).
-
-```bash
-# Select the watsonx.ai provider
-export LLM_PROVIDER=watsonx
-
-# Set your credentials
-export WATSONX_API_KEY=YOUR_KEY
-export WATSONX_URL=https://us-south.ml.cloud.ibm.com
-export WATSONX_PROJECT_ID=YOUR_PROJECT_ID
-
-# Select the LangGraph framework for orchestration
-export AGENT_FRAMEWORK=langgraph  # Other options: crewai, langchain, native
-```
-
------
-
 ## 4\. Local Execution and Verification
 
 With the configuration in place, you can now run the server.
@@ -354,25 +354,44 @@ With the configuration in place, you can now run the server.
 # The 'make run' command is a convenient shortcut for the uvicorn command
 make run
 
+![](assets/2025-09-15-16-51-28.png)
+
 # Alternatively, run uvicorn directly
 uvicorn a2a_universal.server:app --host 0.0.0.0 --port 8000
 ```
 
 Once the server is running, perform a series of smoke tests to verify that all components are operational.
 
+
+1. Check the interactive API documentation (OpenAPI/Swagger)
+You can open [http://localhost:8000/docs](http://localhost:8000/docs)
+
+![](assets/2025-09-15-16-57-19.png)
+
+
+2. Check the basic health endpoint (liveness probe)
 ```bash
-# 1. Check the interactive API documentation (OpenAPI/Swagger)
-open http://localhost:8000/docs
-
-# 2. Check the basic health endpoint (liveness probe)
 curl -s http://localhost:8000/healthz
+```
 
-# 3. Check the readiness endpoint (readiness probe), which verifies provider connectivity
+```bash
+{"status":"ok"}
+```
+
+3. Check the readiness endpoint (readiness probe), which verifies provider connectivity
+```bash
 curl -s http://localhost:8000/readyz | jq
+```
+![](assets/2025-09-15-17-05-21.png)
 
-# 4. Check the agent card for discovery metadata
+
+4. Check the agent card for discovery metadata
+
+```bash
 curl -s http://localhost:8000/.well-known/agent-card.json | jq
 ```
+
+![](assets/2025-09-15-17-08-12.png)
 
 -----
 
@@ -392,6 +411,8 @@ curl -s http://localhost:8000/a2a -H 'Content-Type: application/json' -d '{
 }' | jq
 ```
 
+![](assets/2025-09-15-17-08-44.png)
+
 ### B) JSON-RPC 2.0 Protocol
 
 ```bash
@@ -403,6 +424,7 @@ curl -s http://localhost:8000/rpc -H 'Content-Type: application/json' -d '{
   }}
 }' | jq
 ```
+![](assets/2025-09-15-17-09-23.png)
 
 ### C) OpenAI-Compatible Protocol
 
@@ -414,8 +436,785 @@ curl -s http://localhost:8000/openai/v1/chat/completions \
     "messages":[{"role":"user","content":"hello from openai route"}]
   }' | jq -r '.choices[0].message.content'
 ```
+![](assets/2025-09-15-17-10-05.png)
 
 -----
+
+## 2\. Acquiring IBM watsonx.ai Credentials
+Nìow that you have setup all your enviroment. We are ready to build our first agent. To configure the watsonx.ai provider, you need to obtain your API key and project details from the IBM Cloud platform.
+
+1.  **Sign in to [IBM Cloud](https://cloud.ibm.com/).**
+2.  Navigate to your **watsonx.ai** instance. If you don't have one, create a new project. You can access your projects directly via `https://dataplatform.cloud.ibm.com/projects/`.
+3.  Within your project's **Manage** tab, go to the **Access Control** section and create a new **service API key**. Securely copy this key.
+4.  Collect the following three values:
+      * `WATSONX_API_KEY`: The API key you just generated.
+      * `WATSONX_URL`: The regional endpoint shown in your service instance details (e.g., `https://us-south.ml.cloud.ibm.com`).
+      * `WATSONX_PROJECT_ID`: The GUID of your project, found in the project's **Manage** -\> **General** settings.
+
+For security and ease of configuration, it is highly recommended to store these credentials in a `.env` file at the root of the project.
+
+
+-----
+
+## 3\. Configuring the Runtime Environment
+
+The agent's behavior is controlled by environment variables. This allows you to switch the active provider or framework without any code changes. Set the following variables in your shell (or confirm they are in your `.env` file).
+
+
+## 1) Minimal Setup for watsonx.ai
+**Example `.env` file:**
+
+```env
+# Provider and Framework Selection
+LLM_PROVIDER=watsonx
+AGENT_FRAMEWORK=langgraph
+
+# IBM watsonx.ai Credentials
+WATSONX_API_KEY=your_api_key_here
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_PROJECT_ID=your_project_guid_here
+MODEL_ID=ibm/granite-3-3-8b-instruct # Optional: specify a different model
+
+# Public URL for agent discovery
+PUBLIC_URL=http://localhost:8000
+```
+
+### Install & Run
+
+```bash
+# Select the watsonx.ai provider
+export LLM_PROVIDER=watsonx
+# Set your credentials
+export WATSONX_API_KEY=YOUR_KEY
+export WATSONX_URL=https://us-south.ml.cloud.ibm.com
+export WATSONX_PROJECT_ID=YOUR_PROJECT_ID
+# Select the LangGraph framework for orchestration
+export AGENT_FRAMEWORK=langgraph  # Other options: crewai, langchain, native
+```
+---
+
+You can try with 
+
+
+Use the Makefile, which guarantees the right interpreter and dependencies:
+```bash
+make run
+```
+![](assets/2025-09-15-21-25-18.png)
+
+```bash
+# Linux/macOS
+source .venv/bin/activate
+uvicorn a2a_universal.server:app --host 0.0.0.0 --port 8000
+```
+
+```bash
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+uvicorn a2a_universal.server:app --host 0.0.0.0 --port 8000
+```
+
+provider & framework ready:true
+```bash
+curl -s localhost:8000/readyz | jq    
+```
+
+
+![](assets/2025-09-15-22-00-37.png)
+
+---
+
+## 2) Hello, World — The Absolute Simplest Call
+
+```bash
+curl -s http://localhost:8000/a2a \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "method":"message/send",
+        "params":{"message":{"role":"user","messageId":"m1","parts":[{"type":"text","text":"What are the main attractions in Genova Italy?"}]}}
+      }' | jq
+```
+
+![](assets/2025-09-15-22-11-34.png)
+
+
+
+# What Happened When We Called Universal A2A with Watsonx
+We got back a detailed answer about **tourist attractions in Genoa, Italy**, wrapped in an A2A response.
+
+So what really happened under the hood? Let’s break it down.
+
+---
+
+## Step-by-Step Execution Flow
+
+### 1. **You sent a message in A2A format**
+
+The `curl` request used the **A2A “message/send” envelope**, which is the universal, vendor-neutral contract:
+
+```json
+{
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "messageId": "m1",
+      "parts": [
+        {"type": "text", "text": "What are the main attractions in Genova Italy?"}
+      ]
+    }
+  }
+}
+```
+
+This says: *“Here’s a user message, please send it to the agent and return a reply.”*
+
+---
+
+### 2. **Universal A2A endpoint normalizes the request**
+
+The `/a2a` FastAPI endpoint validated the JSON and recognized the `method: message/send`.
+
+It then extracted the user text:
+
+```
+"What are the main attractions in Genova Italy?"
+```
+
+---
+
+### 3. **Framework plugin takes over (`langgraph`)**
+
+Because we configured:
+
+```bash
+AGENT_FRAMEWORK=langgraph
+```
+
+…the **LangGraph framework plugin** was loaded.
+Its job is to decide *how messages are passed to the provider*.
+
+* In this case, the logic is simple:
+  Take the **last user message** → Forward it to the provider.
+
+If we had chosen a different framework (`crewai`, `autogen`, etc.), this step might have looked more like a multi-turn reasoning loop or a multi-agent workflow.
+
+---
+
+### 4. **Provider plugin selected (`watsonx`)**
+
+Next, the framework called the **provider plugin** defined in our config:
+
+```bash
+LLM_PROVIDER=watsonx
+```
+
+This plugin knows how to talk to **IBM watsonx.ai**.
+It used our credentials:
+
+* `WATSONX_API_KEY`
+* `WATSONX_URL`
+* `WATSONX_PROJECT_ID`
+* `MODEL_ID=ibm/granite-3-3-8b-instruct`
+
+…and sent the user text to the Granite model.
+
+---
+
+### 5. **Watsonx Granite model generates the reply**
+
+The **Granite 8B Instruct model** inside Watsonx produced a detailed answer about Genoa:
+
+* Aquarium of Genoa 🐠
+* Galata Maritime Museum ⚓
+* Piazza De Ferrari 🏛️
+* …and more.
+
+This is the **raw natural language output** from the model.
+
+---
+
+### 6. **Universal A2A wraps the response**
+
+Finally, the runtime wrapped the model output back into an **A2AResponse schema**:
+
+```json
+{
+  "message": {
+    "role": "agent",
+    "messageId": "7bfd4222-3b47-4e15-afd1-d3e95cdafebc",
+    "parts": [
+      {
+        "type": "text",
+        "text": "Genova, Italy, is a vibrant port city with a rich history..."
+      }
+    ]
+  }
+}
+```
+
+Notice:
+
+* `role: "agent"` — marks this as the agent’s reply.
+* `messageId` — auto-generated UUID.
+* `parts` — structured payload, in this case a single `text` part.
+
+---
+
+## Why This Matters
+
+* **One stable API** (`/a2a`, `/rpc`, `/openai/v1/chat/completions`).
+* **Pluggable brains** inside:
+
+  * *Provider* = Watsonx Granite (but could be OpenAI, Ollama, Claude, etc.).
+  * *Framework* = LangGraph (but could be CrewAI, AutoGen, etc.).
+* **Decoupling**: You didn’t have to change your client code when switching from Echo → Watsonx → OpenAI.
+
+---
+
+**In short:**
+Your `curl` request went through the A2A contract → LangGraph framework → Watsonx Granite model → wrapped back into A2A → returned as JSON.
+
+That’s why you got a rich, natural-sounding answer about Genoa attractions from your local Universal A2A Agent.
+
+This posts to `/a2a`. Internally:
+
+* **Framework** reads the user text → calls the **watsonx Provider**
+* **watsonx Provider** calls **IBM watsonx.ai**
+* The server returns the model’s reply.
+---
+
+## 3) Direct Provider Test (no server)
+
+Use this to debug credentials quickly.
+
+**`examples/watsonx_direct.py`**
+
+```python
+import os
+from a2a_universal.providers import build_provider
+
+def main():
+    os.environ.setdefault("LLM_PROVIDER", "watsonx")
+    p = build_provider()
+    print("ready:", p.ready, "reason:", getattr(p, "reason", ""))
+    print("model reply:", p.generate(prompt="Tell me about Genova Italy"))
+
+if __name__ == "__main__":
+    main()
+```
+
+Run:
+
+```bash
+python examples/watsonx_direct.py
+```
+
+If this prints a sane reply, your watsonx credentials are good.
+
+![](assets/2025-09-15-22-24-34.png)
+
+
+### 1. `os.environ.setdefault("LLM_PROVIDER", "watsonx")`
+
+You’re telling the system: *“Use the watsonx provider plugin.”*
+This makes `build_provider()` load the `watsonx` connector instead of `echo`, `openai`, etc.
+
+---
+
+### 2. `p = build_provider()`
+
+This constructs the **provider plugin object**, which knows how to talk to IBM watsonx.ai.
+At this moment, the plugin checks credentials (`WATSONX_API_KEY`, `WATSONX_URL`, `WATSONX_PROJECT_ID`) and marks itself as **ready**.
+
+---
+
+### 3. `print("ready:", p.ready, "reason:", getattr(p, "reason", ""))`
+
+You’re confirming that the provider is operational:
+
+```
+ready: True reason: watsonx.ai ready (model=ibm/granite-3-3-8b-instruct)
+```
+This means Watsonx Granite 8B is correctly initialized.
+---
+
+### 4. `p.generate(prompt="Tell me about Genova Italy")`
+
+This is the actual **LLM call**.
+The provider plugin sends the prompt to IBM watsonx.ai → Granite 8B Instruct model → gets a response.
+
+That’s why you see:
+
+```
+model reply: Genova, also known as Genoa, is a historic seaport city...
+```
+
+
+
+
+---
+
+## 4) Call the Server from Python (tiny client)
+
+Start the server first
+
+```bash
+make run
+
+```
+This starts the Universal A2A Agent on http://0.0.0.0:8000.
+
+Then, in another terminal, run:
+
+
+
+```bash
+python examples/call_server.py
+```
+![](assets/2025-09-15-23-07-27.png)
+
+
+where  **`examples/call_server.py`** it is defined
+
+```python
+import httpx, os, sys
+
+BASE = os.getenv("A2A_BASE", "http://localhost:8000")
+
+def call_a2a(text: str) -> str:
+    payload = {
+        "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "messageId": "poc",
+                "parts": [{"type": "text", "text": text}],
+            }
+        },
+    }
+    try:
+        r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
+        r.raise_for_status()
+    except httpx.ConnectError:
+        return f"[Error] Could not connect to A2A server at {BASE}. Did you run `make run`?"
+    except httpx.HTTPStatusError as e:
+        return f"[Error] Server returned {e.response.status_code}: {e.response.text}"
+
+    data = r.json()
+    for p in (data.get("message") or {}).get("parts", []):
+        if p.get("type") == "text":
+            return p.get("text", "")
+    return "[No text part in A2A response]"
+
+if __name__ == "__main__":
+    print(call_a2a("What is the best dish in Genova?"))
+
+```
+
+
+##  What actually happened
+
+1. **Your script built an A2A request**
+
+   * `examples/call_server.py` created a JSON payload like:
+
+     ```json
+     {
+       "method": "message/send",
+       "params": {
+         "message": {
+           "role": "user",
+           "messageId": "poc",
+           "parts": [
+             {"type": "text", "text": "What is the best dish in Genova?"}
+           ]
+         }
+       }
+     }
+     ```
+   * Then it POSTed it to `http://localhost:8000/a2a`.
+
+---
+
+2. **The Universal A2A Agent server received it**
+
+   * Your **FastAPI app** (`a2a_universal.server`) was running (from `make run` or Docker).
+   * The server parsed the A2A envelope (`method=message/send`).
+   * It extracted the **user text**: `"What is the best dish in Genova?"`.
+
+---
+
+3. **The Framework layer took over**
+
+   * The server called the configured **Framework** (from `AGENT_FRAMEWORK`).
+   * In your `.env`, you had:
+
+     ```env
+     LLM_PROVIDER=watsonx
+     AGENT_FRAMEWORK=langgraph
+     ```
+   * So → the **LangGraph orchestration strategy** was used to pass the user’s text to the provider.
+
+---
+
+4. **The Provider plugin sent the query to IBM watsonx.ai**
+
+   * The **Provider** was `watsonx`.
+   * It used your Watsonx credentials:
+
+     * `WATSONX_API_KEY`
+     * `WATSONX_URL`
+     * `WATSONX_PROJECT_ID`
+     * `MODEL_ID=ibm/granite-3-3-8b-instruct`
+   * It built an API call to Watsonx.ai, sending the prompt:
+     `"What is the best dish in Genova?"`.
+
+---
+
+5. **Watsonx.ai generated the answer**
+
+   * The model (`granite-3-3-8b-instruct`) replied with text about:
+
+     * **Pesto Genovese** 🍝
+     * **Trofie pasta**
+     * **Focaccia** 🥖
+   * This raw text came back to the Universal A2A server.
+
+---
+
+6. **The server wrapped the reply**
+
+   * The Framework wrapped the LLM’s text in a proper **A2A response**:
+
+     ```json
+     {
+       "message": {
+         "role": "agent",
+         "messageId": "xxxx-uuid",
+         "parts": [
+           {
+             "type": "text",
+             "text": "The best dish in Genoa is the Pesto Genovese..."
+           }
+         ]
+       }
+     }
+     ```
+
+---
+
+7. **Your client printed the result**
+
+   * `examples/call_server.py` parsed the JSON.
+   * It extracted the first `text` part.
+   * It printed the model’s answer to your terminal:
+
+     ```
+     The best dish in Genoa is the Pesto Genovese...
+     ```
+
+---
+
+## ✅ In short
+
+Running `call_server.py` = full **Universal A2A roundtrip**:
+
+* Client → A2A request
+* Server → Framework → Provider (Watsonx.ai)
+* Model reply → Framework → Server → A2A response
+* Client prints answer
+
+---
+
+ So what you saw was a **real LLM call** going through your **Universal A2A Agent**, asking Watsonx.ai what the best dish in Genoa is.
+
+
+---
+Here’s the **polished, professional version** of your documentation blog section.
+I’ve made the narrative coherent, connected the code with the observed output, and explained step by step what happened.
+
+---
+
+## 5) Integration with Orchestration Frameworks (Watsonx as Orchestrator + Executor)
+
+### Why this matters
+
+Modern AI stacks are usually **two-layered**:
+
+1. **Orchestration layer (planner)** – decides *what* to do next.
+   Frameworks like **LangChain**, **CrewAI**, and **LangGraph** live here. They often rely on an LLM to reason about tools, routes, and steps.
+
+2. **Execution layer (executor)** – actually performs the work.
+   This is the LLM that answers user questions, processes text, or calls downstream APIs.
+
+The Universal A2A Agent gives you the freedom to **mix and match**:
+
+* Use **IBM watsonx.ai** for **both orchestration and execution**.
+* Or let Watsonx.ai plan (orchestrator) while another LLM (e.g., Anthropic Claude, OpenAI GPT, Ollama local model) executes.
+* Your **application code doesn’t change**—just switch environment variables.
+
+---
+
+### A) LangChain → A2A Tool (all powered by Watsonx.ai)
+
+First install the integrations:
+
+```bash
+pip install -e .[langchain] langchain-ibm ibm-watsonx-ai httpx
+```
+
+**`examples/quickstart_langchain_watsonx.py`**
+
+```python
+import os
+import httpx
+from dotenv import load_dotenv
+
+from langchain.agents import initialize_agent, AgentType
+from langchain.memory import ConversationBufferMemory
+from langchain_core.tools import Tool
+from langchain_ibm import ChatWatsonx
+
+# -------------------------------------------------------------------
+# Load environment variables
+# -------------------------------------------------------------------
+load_dotenv()
+
+BASE = os.getenv("A2A_BASE", "http://localhost:8000")
+
+# -------------------------------------------------------------------
+# Universal A2A tool wrapper
+# -------------------------------------------------------------------
+def a2a_call(prompt: str) -> str:
+    """Send a user message to the Universal A2A /a2a endpoint."""
+    payload = {
+        "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "messageId": "lc-tool",
+                "parts": [{"type": "text", "text": prompt}],
+            }
+        },
+    }
+    try:
+        r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
+        r.raise_for_status()
+        data = r.json()
+        for p in (data.get("message") or {}).get("parts", []):
+            if p.get("type") == "text":
+                return p.get("text", "")
+        return "[No text part in A2A response]"
+    except httpx.HTTPError as e:
+        return f"[A2A HTTP Error: {e}]"
+    except Exception as e:
+        return f"[A2A call failed: {e}]"
+
+# -------------------------------------------------------------------
+# Main: Watsonx Orchestrator + LangChain Agent
+# -------------------------------------------------------------------
+if __name__ == "__main__":
+    # Required environment variables
+    model_id = os.getenv("MODEL_ID", "ibm/granite-3-3-8b-instruct")
+    project_id = os.environ.get("WATSONX_PROJECT_ID")
+    url = os.environ.get("WATSONX_URL")
+    api_key = os.environ.get("WATSONX_API_KEY")
+
+    if not all([project_id, url, api_key]):
+        raise RuntimeError(
+            "Missing Watsonx credentials. Please set WATSONX_PROJECT_ID, WATSONX_URL, and WATSONX_API_KEY."
+        )
+
+    # Orchestrator LLM (Watsonx.ai, via LangChain integration)
+    llm = ChatWatsonx(
+        model_id=model_id,
+        project_id=project_id,
+        base_url=url,
+        apikey=api_key,
+        params={"decoding_method": "greedy", "max_new_tokens": 256},
+        temperature=0.0,
+    )
+
+    # Wrap Universal A2A as a LangChain Tool
+    tool = Tool(
+        name="a2a_hello",
+        description="Send a prompt to the Universal A2A agent and return its reply.",
+        func=a2a_call,
+    )
+
+    # Memory (required for chat-based agents)
+    memory = ConversationBufferMemory(memory_key="chat_history")
+
+    # Build Agent (legacy LangChain agent API)
+    agent = initialize_agent(
+        tools=[tool],
+        llm=llm,
+        agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        handle_parsing_errors=True,
+        memory=memory,
+    )
+
+    # Run an example query
+    query = "Use the a2a_hello tool to say hello to LangChain."
+    response = agent.invoke({"input": query})
+    print("\n[Final Answer]:", response["output"])
+```
+
+Run it:
+
+```bash
+uvicorn a2a_universal.server:app --host 0.0.0.0 --port 8000
+python examples/quickstart_langchain_watsonx.py
+```
+
+---
+
+### 🔎 Example Run (Observed Output)
+
+```text
+> Entering new AgentExecutor chain...
+Question: Say hello to LangChain
+
+Thought: I need to use the a2a_hello tool to send a greeting to LangChain.
+
+Action:
+{
+  "action": "a2a_hello",
+  "action_input": "Hello, LangChain!"
+}
+
+Observation: The Universal A2A agent responds with: "Hello, LangChain!"
+
+Thought: I now know the final answer
+
+Final Answer: Hello, LangChain!
+
+> Finished chain.
+
+[Final Answer]: Hello, LangChain!
+```
+
+
+![](assets/2025-09-16-00-17-08.png)
+
+---
+
+### 🔄 What happens under the hood
+
+1. **LangChain orchestrator**
+   Watsonx.ai (`granite-3-3-8b-instruct`) reasons about the user’s request.
+   It concludes: *"I should call the `a2a_hello` tool."*
+
+2. **Tool invocation → Universal A2A**
+   The agent calls the A2A server at `/a2a`.
+
+3. **A2A Framework → Provider**
+   The A2A runtime framework takes that input and forwards it to the selected **watsonx Provider**.
+
+4. **Provider → IBM watsonx.ai (executor)**
+   Watsonx.ai generates the final response text.
+
+5. **Response bubbles back**
+   Execution result flows back → A2A → LangChain → your application.
+
+---
+
+### ⚖️ Key Advantage
+
+Same vendor, **two distinct roles**:
+
+* **Orchestrator** → plans the workflow (LangChain head using Watsonx.ai).
+* **Executor** → fulfills the task (Universal A2A backend using Watsonx.ai).
+
+This separation keeps your design **modular, future-proof, and vendor-agnostic**.
+Tomorrow you could swap in Claude or GPT as the executor without rewriting your LangChain orchestration logic.
+
+---
+
+👉 This dual-role setup—Watsonx.ai as both planner and executor—is a **powerful enterprise pattern**:
+one brain to coordinate, another brain (sometimes the same vendor, sometimes different) to deliver.
+
+
+
+---
+
+## 6) Reference — The watsonx Provider Plugin (used by the server)
+
+This plugin is what `build_provider()` loads when `LLM_PROVIDER=watsonx`.
+It authenticates and exposes a `generate()` method the framework calls.
+
+**`src/a2a_universal/provider_plugins/watsonx.py`**
+
+
+
+## When does `provider_plugins/watsonx.py` run?
+
+**On server startup**, `a2a_universal.providers.build_provider()` reads `LLM_PROVIDER`.
+If `LLM_PROVIDER=watsonx`, the registry imports and instantiates **`provider_plugins/watsonx.py::Provider`**.
+It authenticates with `WATSONX_API_KEY`, `WATSONX_URL`, `WATSONX_PROJECT_ID`, and sets `ready=True` if good.
+
+**On each request** (`/a2a`, `/rpc`, or `/openai/...`):
+`Framework.execute(messages)` → calls the injected **watsonx Provider** → which calls **IBM watsonx.ai** → returns text.
+
+So *any* example that hits your server will use the watsonx provider if `LLM_PROVIDER=watsonx`.
+
+---
+
+
+
+> You don’t call this file directly. The server **builds** it on startup (via `build_provider()`), then the **framework** uses it for each request.
+
+---
+
+## 7) What is the Framework plugin doing?
+
+Conceptually (simplified):
+
+```python
+class Framework(FrameworkBase):
+    id = "langgraph"
+    name = "LangGraph Framework"
+
+    def __init__(self, provider: ProviderBase):
+        self.provider = provider
+        self.ready = provider.ready
+        self.reason = "" if provider.ready else provider.reason
+
+    async def execute(self, messages: list[dict]) -> str:
+        # Extract last user text:
+        user_text = ""
+        for m in reversed(messages):
+            if m.get("role") == "user" and isinstance(m.get("content"), str):
+                user_text = m["content"]; break
+        # Call the provider (watsonx) to get a reply:
+        return self.provider.generate(prompt=user_text)
+```
+
+That’s it: “read messages → call provider → return text.”
+You can later swap frameworks without touching provider code (and vice versa).
+
+---
+
+## 8) Troubleshooting (watsonx-specific)
+
+* **`readyz` shows not-ready**: Check `WATSONX_API_KEY`, `WATSONX_URL`, `WATSONX_PROJECT_ID`, `MODEL_ID`.
+* **ImportError**: Install `ibm-watsonx-ai` (and `langchain-ibm` if you use LangChain).
+* **401/403**: Verify the API key scope and project access in IBM Cloud.
+* **Timeouts**: Your network or region mismatch; confirm `WATSONX_URL` and model availability.
+
+---
+
+## TL;DR
+
+* **Provider** = watsonx.ai client (actual text generation).
+* **Framework** = strategy wrapper that uses the provider (state/memory/graph/steps).
+* Set env: `LLM_PROVIDER=watsonx`, `AGENT_FRAMEWORK=langgraph`.
+* Start server, hit `/a2a` (or `/rpc`, `/openai/...`).
+* Optional: In LangChain, use **ChatWatsonx** for orchestration and call A2A as a Tool.
+
+
 
 ## 6\. Integration with Orchestration Frameworks
 
@@ -429,48 +1228,6 @@ A key advantage of this architecture is its ability to serve as a standardized t
 
 Here, we wrap our A2A endpoint as a `Tool` that a LangChain agent can decide to use.
 
-```python
-# File: examples/quickstart_langchain_watsonx.py
-import httpx
-from langchain.agents import initialize_agent, AgentType
-from langchain_core.tools import Tool
-from langchain_openai import ChatOpenAI
-
-BASE = "http://localhost:8000"
-
-# Define the function that calls our A2A endpoint
-def a2a_call(prompt: str) -> str:
-    try:
-        payload = {
-            "method": "message/send",
-            "params": {"message": {
-                "role": "user", "messageId": "lc-tool",
-                "parts": [{"type": "text", "text": prompt}],
-            }},
-        }
-        r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
-        r.raise_for_status()
-        data = r.json()
-        # Extract the text response from the A2A message structure
-        for p in (data.get("message") or {}).get("parts", []):
-            if p.get("type") == "text":
-                return p.get("text", "")
-        return "[No text part in A2A response]"
-    except httpx.HTTPError as e:
-        return f"[A2A HTTP Error: {e}]"
-    except Exception as e:
-        return f"[A2A call failed: {e}]"
-
-
-# Create the LangChain Tool
-tool = Tool(name="a2a_hello", description="Send a prompt to the Universal A2A agent.", func=a2a_call)
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0) # This is the orchestrator LLM
-agent = initialize_agent([tool], llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION)
-
-if __name__ == "__main__":
-    response = agent.run("Use the a2a_hello tool to say hello to LangChain.")
-    print(response)
-```
 
 ### 6.2. LangGraph `Node` Integration
 
@@ -478,25 +1235,33 @@ In LangGraph, our A2A agent can act as a node in a stateful graph.
 
 ```python
 # File: examples/quickstart_langgraph_watsonx.py
-import asyncio, httpx
-from langgraph.graph import StateGraph, END, MessagesState
+import asyncio
+import httpx
+from langgraph.graph import StateGraph, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage
 
 BASE = "http://localhost:8000"
 
+# -------------------------------------------------------------------
+# A2A async call
+# -------------------------------------------------------------------
 async def a2a_send(text: str) -> str:
-    try:
-        payload = {
-            "method": "message/send",
-            "params": {"message": {
-                "role": "user", "messageId": "lg-node",
+    """Send a message to Universal A2A and return its reply text."""
+    payload = {
+        "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "messageId": "lg-node",
                 "parts": [{"type": "text", "text": text}],
-            }},
-        }
+            }
+        },
+    }
+    try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(f"{BASE}/a2a", json=payload)
             r.raise_for_status()
-            data = r.json()
+            data = r.json()  # FIX: httpx .json() is synchronous
             for p in (data.get("message") or {}).get("parts", []):
                 if p.get("type") == "text":
                     return p.get("text", "")
@@ -506,22 +1271,29 @@ async def a2a_send(text: str) -> str:
     except Exception as e:
         return f"[A2A call failed: {e}]"
 
-# This function defines the logic for our graph node
-async def a2a_node(state: dict) -> dict:
+# -------------------------------------------------------------------
+# LangGraph node: forward message to A2A
+# -------------------------------------------------------------------
+async def a2a_node(state: MessagesState) -> MessagesState:
     last_message = state["messages"][-1]
-    reply = await a2a_send(getattr(last_message, "content", ""))
-    return {"messages": [AIMessage(content=reply)]}
+    user_text = getattr(last_message, "content", "")
+    reply_text = await a2a_send(user_text)
+    return {"messages": [AIMessage(content=reply_text)]}
 
-# Build the graph
-g = StateGraph(MessagesState)
-g.add_node("a2a", a2a_node)
-g.add_edge("__start__", "a2a")
-g.add_edge("a2a", END)
-app = g.compile()
+# -------------------------------------------------------------------
+# Build LangGraph workflow
+# -------------------------------------------------------------------
+graph = StateGraph(MessagesState)
+graph.add_node("a2a", a2a_node)
+graph.set_entry_point("a2a")
+app = graph.compile()
 
+# -------------------------------------------------------------------
+# Run example
+# -------------------------------------------------------------------
 async def main():
-    out = await app.ainvoke({"messages": [HumanMessage(content="ping")]})
-    print(out["messages"][-1].content)
+    result = await app.ainvoke({"messages": [HumanMessage(content="Tell me about Genova?")]})
+    print("\n[Final Answer]:", result["messages"][-1].content)
 
 if __name__ == "__main__":
     asyncio.run(main())
