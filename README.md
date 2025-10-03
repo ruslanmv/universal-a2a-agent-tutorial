@@ -715,6 +715,17 @@ If this prints a sane reply, your watsonx credentials are good.
 ![](assets/2025-09-15-22-24-34.png)
 
 
+If you did not exported the enviroment variables you can add this block to the previos code
+
+
+```python
+# Load environment variables from the .env file in the same directory as this script
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=Path(__file__).parent / '.env')
+```
+
+
 ### 1. `os.environ.setdefault("LLM_PROVIDER", "watsonx")`
 
 You’re telling the system: *“Use the watsonx provider plugin.”*
@@ -916,7 +927,7 @@ if __name__ == "__main__":
 
 ---
 
-## ✅ In short
+##  In short
 
 Running `call_server.py` = full **Universal A2A roundtrip**:
 
@@ -964,9 +975,22 @@ First install the integrations:
 pip install -e .[langchain] langchain-ibm ibm-watsonx-ai httpx
 ```
 
+then you define your agent framework in .env file
+```bash
+AGENT_FRAMEWORK=langchain
+```
+
 **`examples/quickstart_langchain_watsonx.py`**
 
 ```python
+"""
+Example: LangChain Agent + Watsonx.ai + Universal A2A
+
+- Watsonx.ai acts as the orchestrator (LLM for planning).
+- Universal A2A Agent acts as the executor (tool backend).
+- Demonstrates clean error handling, memory, and environment setup.
+"""
+
 import os
 import httpx
 from dotenv import load_dotenv
@@ -976,12 +1000,14 @@ from langchain.memory import ConversationBufferMemory
 from langchain_core.tools import Tool
 from langchain_ibm import ChatWatsonx
 
+
 # -------------------------------------------------------------------
 # Load environment variables
 # -------------------------------------------------------------------
 load_dotenv()
 
 BASE = os.getenv("A2A_BASE", "http://localhost:8000")
+
 
 # -------------------------------------------------------------------
 # Universal A2A tool wrapper
@@ -998,6 +1024,7 @@ def a2a_call(prompt: str) -> str:
             }
         },
     }
+
     try:
         r = httpx.post(f"{BASE}/a2a", json=payload, timeout=30.0)
         r.raise_for_status()
@@ -1010,6 +1037,7 @@ def a2a_call(prompt: str) -> str:
         return f"[A2A HTTP Error: {e}]"
     except Exception as e:
         return f"[A2A call failed: {e}]"
+
 
 # -------------------------------------------------------------------
 # Main: Watsonx Orchestrator + LangChain Agent
@@ -1060,12 +1088,22 @@ if __name__ == "__main__":
     query = "Use the a2a_hello tool to say hello to LangChain."
     response = agent.invoke({"input": query})
     print("\n[Final Answer]:", response["output"])
+
+
+"""
+Notes:
+- You’ll see deprecation warnings because LangChain agents are legacy.
+- Migration path: LangGraph (recommended for new apps).
+  See: https://langchain-ai.github.io/langgraph/
+
+But this script will continue to run correctly with LangChain.
+"""
+
 ```
 
 Run it:
 
 ```bash
-uvicorn a2a_universal.server:app --host 0.0.0.0 --port 8000
 python examples/quickstart_langchain_watsonx.py
 ```
 
@@ -1229,6 +1267,7 @@ A key advantage of this architecture is its ability to serve as a standardized t
 Here, we wrap our A2A endpoint as a `Tool` that a LangChain agent can decide to use.
 
 
+
 ### 6.2. LangGraph `Node` Integration
 
 In LangGraph, our A2A agent can act as a node in a stateful graph.
@@ -1297,6 +1336,28 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
+
+
+
+First we edit the .env file 
+```bash
+AGENT_FRAMEWORK=langgraph
+```
+
+then 
+```bash
+make run
+```
+or we type
+
+```bash
+./scripts/load-dotenv.sh && .venv/bin/uvicorn a2a_universal.server:app --host 0.0.0.0 --port 8000
+```
+
+
+```bash
+python  examples/quickstart_langgraph_watsonx.py
 ```
 
 ### 6.3. CrewAI Multi-Agent System
@@ -1406,10 +1467,22 @@ if __name__ == "__main__":
 
 ```
 
+First we edit the .env file 
+```bash
+AGENT_FRAMEWORK=crewai
+```
+
+```bash
+python  examples/crewai_watsonx_duo.py
+```
+
+
 ![](assets/2025-09-16-00-46-54.png)
 
 
 ![](assets/2025-09-16-00-47-39.png)
+
+
 -----
 
 ## 7\. Containerization with Docker
@@ -1420,7 +1493,7 @@ Containerizing the application with Docker ensures consistency and portability a
 
 ```bash
 # Build the image, tagging it with a version
-docker build -t your-repo/universal-a2a-agent:1.2.0 .
+docker build -t ruslanmv/universal-a2a-agent:1.2.0 .
 
 # Run the container, passing credentials as environment variables
 docker run --rm -p 8000:8000 \
@@ -1429,7 +1502,7 @@ docker run --rm -p 8000:8000 \
   -e WATSONX_API_KEY=$WATSONX_API_KEY \
   -e WATSONX_URL=$WATSONX_URL \
   -e WATSONX_PROJECT_ID=$WATSONX_PROJECT_ID \
-  your-repo/universal-a2a-agent:1.2.0
+  ruslanmv/universal-a2a-agent:1.2.0
 ```
 
 > Note: The `PUBLIC_URL` variable is used by the agent service itself. For deploying the MatrixHub service, a different variable, `PUBLIC_BASE_URL`, is often required.
